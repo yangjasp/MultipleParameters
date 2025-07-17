@@ -1,1 +1,2 @@
 # MultipleParameters
+This repository contains the code accompanying the paper "Optimal two-phase survey designs for generalized raking with multiple parameters of interest". The code to run the simulations under the optimal design for IPW and optimal design for GR are held in separate folder, and within those folders the code for each simulation scenario (two outcomes, two predictors, two of each) are separated. The .bat files will run the corresponding analysis, subject to appropriate updating of pathnames.
