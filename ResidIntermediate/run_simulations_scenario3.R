@@ -50,6 +50,10 @@ pathname <- args$pathname
 n <- args$n
 N <- args$N
 
+  ####
+  #### To run this manually (outside of .bat), set above args manually
+  #### according to simulation scenario
+
 ####
 ## Start simulations - Each scenario
 ####
