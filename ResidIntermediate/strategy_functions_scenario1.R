@@ -124,18 +124,33 @@ Strategy1 <- function(n, simulations_df,
   ##### Phase 2
   
   ### Collect samples via case-control sampling
-  design_Y1 <- data.frame("strata" = c(1,0), "n_to_sample" = c(n/4,n/4))
-  design_Y2 <- data.frame("strata" = c(1,0), "n_to_sample" = c(n/4,n/4))
+  stratum_sizes <- table(data$strata)
+  
+  design_cc <- data.frame("strata" = c("1.1","0.1", "1.0", "0.0"),
+                          "n_to_sample" = c(min(stratum_sizes["1.1"], n/4),
+                                            min(stratum_sizes["0.1"], n/4),
+                                            min(stratum_sizes["1.0"], n/4),
+                                            n - min(stratum_sizes["1.1"], n/4) -
+                                              min(stratum_sizes["0.1"], n/4) -
+                                              min(stratum_sizes["1.0"], n/4)))
   
   data <- data |>
-    optimall::sample_strata(strata = "Y1_strat", id = "id",
-                            design_data = design_Y1) |>
-    dplyr::mutate(sample1_indicator = sample_indicator) |>
-    optimall::sample_strata(strata = "Y2_strat", id = "id",
-                            design_data = design_Y2,
-                            already_sampled = "sample_indicator") |>
-    dplyr::mutate(sample2_indicator = sample_indicator,
-                  sample_indicator = sample2_indicator + sample1_indicator)
+    optimall::sample_strata(strata = "strata", id = "id", 
+                            design_data = design_cc)
+  
+  ### Collect samples via case-control sampling: OLD
+  # design_Y1 <- data.frame("strata" = c(1,0), "n_to_sample" = c(n/4,n/4))
+  # design_Y2 <- data.frame("strata" = c(1,0), "n_to_sample" = c(n/4,n/4))
+  
+  #data <- data |>
+  #  optimall::sample_strata(strata = "Y1_strat", id = "id",
+  #                          design_data = design_Y1) |>
+  #  dplyr::mutate(sample1_indicator = sample_indicator) |>
+  #  optimall::sample_strata(strata = "Y2_strat", id = "id",
+  #                          design_data = design_Y2,
+  #                          already_sampled = "sample_indicator") |>
+  #  dplyr::mutate(sample2_indicator = sample_indicator,
+  #                sample_indicator = sample2_indicator + sample1_indicator)
   
   # Sample 
   data$X <- ifelse(data$sample_indicator == 1, full_data$X , NA)
@@ -1304,6 +1319,17 @@ Strategy3.5 <- function(n, simulations_df, scenario, N = 10000){
                                          strata = "strata",
                                          y = "inflB12_phase1",
                                          nsample = n/4, method = "Neyman")
+  
+  if(any(wave1_allocation$stratum_size <= 2)){
+    small_strata <- wave1_allocation[wave1_allocation$stratum_size <= 2,"strata"]
+    missing_n <- sum(2 - wave1_allocation[wave1_allocation$stratum_size <= 2, "stratum_size"])
+    largest_strata <- wave1_allocation[wave1_allocation$stratum_size == max(wave1_allocation$stratum_size),
+                                       "strata"][1]
+    wave1_allocation[wave1_allocation$strata == largest_strata,
+                     "stratum_size"] <- wave1_allocation[wave1_allocation$strata == largest_strata,
+                                                        "stratum_size"] - missing_n
+    wave1_allocation[wave1_allocation$strata %in% small_strata, "stratum_size"] <- 2
+  }
   
   
   # First n/4 according to wave1_allocation
