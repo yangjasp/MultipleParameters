@@ -99,6 +99,7 @@ Strategy1 <- function(n, simulations_df,
   
   full_data$inflBX1_phase1 <- inf_fun_logit(fit_phase1)[,"X1_obs"]
   full_data$inflBX2_phase1 <- inf_fun_logit(fit_phase1)[,"X2_obs"]
+  full_data$inflBZ_phase1 <- inf_fun_logit(fit_phase1)[,"Z_obs"]
   
   #### Divide into strata based on observed phase 1 data X
   full_data <- full_data |> 
@@ -136,7 +137,7 @@ Strategy1 <- function(n, simulations_df,
     id = list(~1, ~1), subset = ~as.logical(sample_indicator),
     strata = list(NULL, ~strata), data = data
   )
-  infcal <- survey::calibrate(mydesign, formula = ~inflBX1_phase1 + inflBX2_phase1 + 
+  infcal <- survey::calibrate(mydesign, formula = ~inflBX1_phase1 + inflBX2_phase1 + inflBZ_phase1 + 
                                 strata, 
                               phase = 2, calfun = "raking")
   
@@ -262,6 +263,7 @@ Strategy2 <- function(n, simulations_df, scenario, N = 10000){
                      family = "binomial", data = full_data)
   full_data$inflBX1_phase1 <- inf_fun_logit(fit_phase1)[,"X1_obs"]
   full_data$inflBX2_phase1 <- inf_fun_logit(fit_phase1)[,"X2_obs"]
+  full_data$inflBZ_phase1 <- inf_fun_logit(fit_phase1)[,"Z_obs"]
   
   #### Divide into strata based on observed phase 1 data X
   full_data <- full_data |>
@@ -300,12 +302,12 @@ Strategy2 <- function(n, simulations_df, scenario, N = 10000){
   allocation1 <- optimum_allocation(phase1_data,
                                     strata = "strata",
                                     y = "inflBX1_phase1",
-                                    nsample = n/8, method = "Neyman")
+                                    nsample = n/8)
   
   allocation2 <- optimum_allocation(phase1_data,
                                     strata = "strata",
                                     y = "inflBX2_phase1",
-                                    nsample = n/8, method = "Neyman")
+                                    nsample = n/8)
   
   # Step 5: Combine allocations for total allocation of n/4
   wave1_allocation <- dplyr::left_join(allocation1, allocation2, by = "strata") |>
@@ -338,7 +340,7 @@ Strategy2 <- function(n, simulations_df, scenario, N = 10000){
   # Calibrate
   calibrated_twophase_wave1 <- calibrate(twophase_design_wave1,
                                             ~ inflBX1_phase1 +
-                                              inflBX2_phase1 +
+                                              inflBX2_phase1 + inflBZ_phase1 +
                                               strata,
                                             phase = 2,
                                             calfun = "raking")
@@ -355,10 +357,24 @@ Strategy2 <- function(n, simulations_df, scenario, N = 10000){
   names(infl_wave1) <- c("id", "inflBX1", "inflBX2")
   phase2_wave1 <- dplyr::left_join(phase2_wave1, infl_wave1, by = "id")
   
+  # Calculate phase 2 sampling weights
+  phase2_wave1 <- phase2_wave1 |>
+    dplyr::group_by(strata) |>
+    dplyr::mutate(
+      phase2_weight = dplyr::n() / sum(as.logical(sampled_wave1))
+    ) |>
+    dplyr::ungroup() |> as.data.frame()
+
   # Regress Latest IFs (computed above) on Phase 1 IFs
-  resid_model_BX1_wave1 <- lm(phase2_wave1$inflBX1 ~ phase2_wave1$inflBX1_phase1,
+  resid_model_BX1_wave1 <- lm(inflBX1 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave1,
+                              weights = phase2_weight,
                               na.action = na.exclude)
-  resid_model_BX2_wave1 <- lm(phase2_wave1$inflBX2 ~ phase2_wave1$inflBX2_phase1,
+  resid_model_BX2_wave1 <- lm(inflBX2 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave1,
+                              weights = phase2_weight,
                               na.action = na.exclude)
   
   # Get residuals
@@ -371,15 +387,13 @@ Strategy2 <- function(n, simulations_df, scenario, N = 10000){
                                strata = "strata",
                                y = "residBX1_wave1", method = "iterative",
                                already_sampled = "sampled_wave1",
-                               nsample = n/8, 
-                               allocation_method = "Neyman")
+                               nsample = n/8)
   
   allocation2 <- allocate_wave(phase2_wave1,
                                strata = "strata",
                                y = "residBX2_wave1",
                                already_sampled = "sampled_wave1",
-                               nsample = n/8, method = "iterative",
-                               allocation_method = "Neyman")
+                               nsample = n/8, method = "iterative")
   
   # and combine
   wave2_allocation <- dplyr::left_join(allocation1, allocation2, 
@@ -426,7 +440,7 @@ Strategy2 <- function(n, simulations_df, scenario, N = 10000){
   # Calibrate
   calibrated_twophase_wave2 <- calibrate(twophase_design_wave2,
                                          ~ inflBX1_phase1 +
-                                           inflBX2_phase1 +
+                                           inflBX2_phase1 + inflBZ_phase1 +
                                            strata,
                                          phase = 2,
                                          calfun = "raking")
@@ -443,10 +457,24 @@ Strategy2 <- function(n, simulations_df, scenario, N = 10000){
   names(infl_wave2) <- c("id", "inflBX1", "inflBX2")
   phase2_wave2 <- dplyr::left_join(phase2_wave2, infl_wave2, by = "id")
   
+  # Calculate phase 2 sampling weights
+  phase2_wave2 <- phase2_wave2 |>
+    dplyr::group_by(strata) |>
+    dplyr::mutate(
+      phase2_weight = dplyr::n() / sum(as.logical(already_sampled))
+    ) |>
+    dplyr::ungroup() |> as.data.frame()
+
   # Regress Latest IFs (computed above) on Phase 1 IFs
-  resid_model_BX1_wave2 <- lm(phase2_wave2$inflBX1 ~ phase2_wave2$inflBX1_phase1,
+  resid_model_BX1_wave2 <- lm(inflBX1 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave2,
+                              weights = phase2_weight,
                               na.action = na.exclude)
-  resid_model_BX2_wave2 <- lm(phase2_wave2$inflBX2 ~ phase2_wave2$inflBX2_phase1,
+  resid_model_BX2_wave2 <- lm(inflBX2 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave2,
+                              weights = phase2_weight,
                               na.action = na.exclude)
   
   # Get residuals
@@ -460,16 +488,14 @@ Strategy2 <- function(n, simulations_df, scenario, N = 10000){
                                y = "residBX1_wave2",
                                method = "iterative",
                                nsample = n/8,
-                               already_sampled = "already_sampled",
-                               allocation_method = "Neyman")
+                               already_sampled = "already_sampled")
   
   allocation2 <- allocate_wave(phase2_wave2,
                                strata = "strata",
                                y = "residBX2_wave2",
                                method = "iterative",
                                nsample = n/8, 
-                               already_sampled = "already_sampled",
-                               allocation_method = "Neyman")
+                               already_sampled = "already_sampled")
   
   # and combine
   wave3_allocation <- dplyr::left_join(allocation1, allocation2, 
@@ -519,7 +545,7 @@ Strategy2 <- function(n, simulations_df, scenario, N = 10000){
   # Calibrate
   calibrated_twophase_wave3 <- calibrate(twophase_design_wave3,
                                          ~ inflBX1_phase1 +
-                                           inflBX2_phase1 +
+                                           inflBX2_phase1 + inflBZ_phase1 +
                                            strata,
                                          phase = 2,
                                          calfun = "raking")
@@ -536,10 +562,24 @@ Strategy2 <- function(n, simulations_df, scenario, N = 10000){
   names(infl_wave3) <- c("id", "inflBX1", "inflBX2")
   phase2_wave3 <- dplyr::left_join(phase2_wave3, infl_wave3, by = "id")
   
+  # Calculate phase 2 sampling weights
+  phase2_wave3 <- phase2_wave3 |>
+    dplyr::group_by(strata) |>
+    dplyr::mutate(
+      phase2_weight = dplyr::n() / sum(as.logical(already_sampled))
+    ) |>
+    dplyr::ungroup() |> as.data.frame()
+
   # Regress Latest IFs (computed above) on Phase 1 IFs
-  resid_model_BX1_wave3 <- lm(phase2_wave3$inflBX1 ~ phase2_wave3$inflBX1_phase1,
+  resid_model_BX1_wave3 <- lm(inflBX1 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave3,
+                              weights = phase2_weight,
                               na.action = na.exclude)
-  resid_model_BX2_wave3 <- lm(phase2_wave3$inflBX2 ~ phase2_wave3$inflBX2_phase1,
+  resid_model_BX2_wave3 <- lm(inflBX2 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave3,
+                              weights = phase2_weight,
                               na.action = na.exclude)
   
   # Get residuals
@@ -554,8 +594,7 @@ Strategy2 <- function(n, simulations_df, scenario, N = 10000){
                                method = "iterative",
                                nsample = n/8, 
                                already_sampled = "already_sampled",
-                               detailed = TRUE,
-                               allocation_method = "Neyman")
+                               detailed = TRUE)
   
   allocation2 <- allocate_wave(phase2_wave3,
                                strata = "strata",
@@ -563,8 +602,7 @@ Strategy2 <- function(n, simulations_df, scenario, N = 10000){
                                method = "iterative",
                                nsample = n/8, 
                                already_sampled = "already_sampled",
-                               detailed = TRUE,
-                               allocation_method = "Neyman")
+                               detailed = TRUE)
   
   # Set indicators for oversampling
   oversampled_X1 <- ifelse(all(allocation1$nsample_optimal == 
@@ -633,7 +671,7 @@ Strategy2 <- function(n, simulations_df, scenario, N = 10000){
     id = list(~1, ~1), subset = ~as.logical(already_sampled),
     strata = list(NULL, ~strata), data = data
   )
-  infcal <- survey::calibrate(mydesign, formula = ~inflBX1_phase1 + inflBX2_phase1
+  infcal <- survey::calibrate(mydesign, formula = ~inflBX1_phase1 + inflBX2_phase1 + inflBZ_phase1
                               + strata, 
                               phase = 2, calfun = "raking")
   
@@ -754,6 +792,7 @@ Strategy3 <- function(n, simulations_df, scenario, N = 10000){
                      family = "binomial", data = full_data)
   full_data$inflBX1_phase1 <- inf_fun_logit(fit_phase1)[,"X1_obs"]
   full_data$inflBX2_phase1 <- inf_fun_logit(fit_phase1)[,"X2_obs"]
+  full_data$inflBZ_phase1 <- inf_fun_logit(fit_phase1)[,"Z_obs"]
   
   #### Divide into strata based on observed phase 1 data X
   full_data <- full_data |>
@@ -792,7 +831,7 @@ Strategy3 <- function(n, simulations_df, scenario, N = 10000){
   wave1_allocation <- optimum_allocation(phase1_data,
                                          strata = "strata",
                                          y = "inflBX1_phase1",
-                                         nsample = n/4, method = "Neyman")
+                                         nsample = n/4)
   
   
   # Sample First n/4 according to wave1_allocation
@@ -822,7 +861,7 @@ Strategy3 <- function(n, simulations_df, scenario, N = 10000){
   # Calibrate
   calibrated_twophase_wave1 <- calibrate(twophase_design_wave1,
                                          ~ inflBX1_phase1 +
-                                           inflBX2_phase1 +
+                                           inflBX2_phase1 + inflBZ_phase1 +
                                            strata,
                                          phase = 2,
                                          calfun = "raking")
@@ -838,8 +877,19 @@ Strategy3 <- function(n, simulations_df, scenario, N = 10000){
   names(infl_wave1) <- c("id", "inflBX1")
   phase2_wave1 <- dplyr::left_join(phase2_wave1, infl_wave1, by = "id")
   
+  # Calculate phase 2 sampling weights
+  phase2_wave1 <- phase2_wave1 |>
+    dplyr::group_by(strata) |>
+    dplyr::mutate(
+      phase2_weight = dplyr::n() / sum(as.logical(sampled_wave1))
+    ) |>
+    dplyr::ungroup() |> as.data.frame()
+
   # Regress Latest IFs (computed above) on Phase 1 IFs
-  resid_model_BX1_wave1 <- lm(phase2_wave1$inflBX1 ~ phase2_wave1$inflBX1_phase1,
+  resid_model_BX1_wave1 <- lm(inflBX1 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave1,
+                              weights = phase2_weight,
                               na.action = na.exclude)
   
   # Get residuals
@@ -851,8 +901,7 @@ Strategy3 <- function(n, simulations_df, scenario, N = 10000){
                                     strata = "strata",
                                     y = "residBX1_wave1",
                                     nsample = n/4, method = "iterative",
-                                    already_sampled = "sampled_wave1",
-                                    allocation_method = "Neyman")
+                                    already_sampled = "sampled_wave1")
   
   
   # sample and merge data
@@ -892,7 +941,7 @@ Strategy3 <- function(n, simulations_df, scenario, N = 10000){
   # Calibrate
   calibrated_twophase_wave2 <- calibrate(twophase_design_wave2,
                                          ~ inflBX1_phase1 +
-                                           inflBX2_phase1 +
+                                           inflBX2_phase1 + inflBZ_phase1 +
                                            strata,
                                          phase = 2,
                                          calfun = "raking")
@@ -908,8 +957,19 @@ Strategy3 <- function(n, simulations_df, scenario, N = 10000){
   names(infl_wave2) <- c("id", "inflBX2")
   phase2_wave2 <- dplyr::left_join(phase2_wave2, infl_wave2, by = "id")
   
+  # Calculate phase 2 sampling weights
+  phase2_wave2 <- phase2_wave2 |>
+    dplyr::group_by(strata) |>
+    dplyr::mutate(
+      phase2_weight = dplyr::n() / sum(as.logical(already_sampled))
+    ) |>
+    dplyr::ungroup() |> as.data.frame()
+
   # Regress Latest IFs (computed above) on Phase 1 IFs
-  resid_model_BX2_wave2 <- lm(phase2_wave2$inflBX2 ~ phase2_wave2$inflBX2_phase1,
+  resid_model_BX2_wave2 <- lm(inflBX2 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave2,
+                              weights = phase2_weight,
                               na.action = na.exclude)
   
   # Get residuals
@@ -921,8 +981,7 @@ Strategy3 <- function(n, simulations_df, scenario, N = 10000){
                                     strata = "strata",
                                     y = "residBX2_wave2",
                                     nsample = n/4, method = "iterative",
-                                    already_sampled = "already_sampled",
-                                    allocation_method = "Neyman")
+                                    already_sampled = "already_sampled")
   
   
   # sample and merge data
@@ -967,7 +1026,7 @@ Strategy3 <- function(n, simulations_df, scenario, N = 10000){
   # Calibrate
   calibrated_twophase_wave3 <- calibrate(twophase_design_wave3,
                                          ~ inflBX1_phase1 +
-                                           inflBX2_phase1 +
+                                           inflBX2_phase1 + inflBZ_phase1 +
                                            strata,
                                          phase = 2,
                                          calfun = "raking")
@@ -983,8 +1042,19 @@ Strategy3 <- function(n, simulations_df, scenario, N = 10000){
   names(infl_wave3) <- c("id", "inflBX2")
   phase2_wave3 <- dplyr::left_join(phase2_wave3, infl_wave3, by = "id")
   
+  # Calculate phase 2 sampling weights
+  phase2_wave3 <- phase2_wave3 |>
+    dplyr::group_by(strata) |>
+    dplyr::mutate(
+      phase2_weight = dplyr::n() / sum(as.logical(already_sampled))
+    ) |>
+    dplyr::ungroup() |> as.data.frame()
+
   # Regress Latest IFs (computed above) on Phase 1 IFs
-  resid_model_BX2_wave3 <- lm(phase2_wave3$inflBX2 ~ phase2_wave3$inflBX2_phase1,
+  resid_model_BX2_wave3 <- lm(inflBX2 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave3,
+                              weights = phase2_weight,
                               na.action = na.exclude)
   
   # Get residuals
@@ -997,8 +1067,7 @@ Strategy3 <- function(n, simulations_df, scenario, N = 10000){
                                     y = "residBX2_wave3",
                                     nsample = n/4, method = "iterative",
                                     already_sampled = "already_sampled",
-                                    detailed = TRUE,
-                                    allocation_method = "Neyman")
+                                    detailed = TRUE)
   
   # Check for oversampling
   oversampled_X2 <- ifelse(all(wave4_allocation$nsample_optimal == 
@@ -1059,7 +1128,7 @@ Strategy3 <- function(n, simulations_df, scenario, N = 10000){
     strata = list(NULL, ~strata), data = data
   )
   infcal <- survey::calibrate(mydesign, formula = ~ inflBX1_phase1 +
-                                inflBX2_phase1 + strata, phase = 2, calfun = "raking")
+                                inflBX2_phase1 + inflBZ_phase1 + strata, phase = 2, calfun = "raking")
   
   # Fitting the outcome model: conditional treatment effect of interest.
   fit <- survey::svyglm(Y ~ X1 + X2 + Z, design = infcal, family = quasibinomial)
@@ -1179,6 +1248,7 @@ Strategy3.5 <- function(n, simulations_df, scenario, N = 10000){
                      family = "binomial", data = full_data)
   full_data$inflBX1_phase1 <- inf_fun_logit(fit_phase1)[,"X1_obs"]
   full_data$inflBX2_phase1 <- inf_fun_logit(fit_phase1)[,"X2_obs"]
+  full_data$inflBZ_phase1 <- inf_fun_logit(fit_phase1)[,"Z_obs"]
   
   #### Divide into strata based on observed phase 1 data X
   full_data <- full_data |>
@@ -1248,7 +1318,7 @@ Strategy3.5 <- function(n, simulations_df, scenario, N = 10000){
   # Calibrate
   calibrated_twophase_wave1 <- calibrate(twophase_design_wave1,
                                          ~ inflBX1_phase1 +
-                                           inflBX2_phase1 +
+                                           inflBX2_phase1 + inflBZ_phase1 +
                                            strata,
                                          phase = 2,
                                          calfun = "raking")
@@ -1264,8 +1334,19 @@ Strategy3.5 <- function(n, simulations_df, scenario, N = 10000){
   names(infl_wave1) <- c("id", "inflBX2")
   phase2_wave1 <- dplyr::left_join(phase2_wave1, infl_wave1, by = "id")
   
+  # Calculate phase 2 sampling weights
+  phase2_wave1 <- phase2_wave1 |>
+    dplyr::group_by(strata) |>
+    dplyr::mutate(
+      phase2_weight = dplyr::n() / sum(as.logical(sampled_wave1))
+    ) |>
+    dplyr::ungroup() |> as.data.frame()
+
   # Regress Latest IFs (computed above) on Phase 1 IFs
-  resid_model_BX2_wave1 <- lm(phase2_wave1$inflBX2 ~ phase2_wave1$inflBX2_phase1,
+  resid_model_BX2_wave1 <- lm(inflBX2 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave1,
+                              weights = phase2_weight,
                               na.action = na.exclude)
   
   # Get residuals
@@ -1276,8 +1357,7 @@ Strategy3.5 <- function(n, simulations_df, scenario, N = 10000){
                                     strata = "strata",
                                     y = "residBX2_wave1",
                                     nsample = n/4, method = "iterative",
-                                    already_sampled = "sampled_wave1",
-                                    allocation_method = "Neyman")
+                                    already_sampled = "sampled_wave1")
   
   
   # sample and merge data
@@ -1317,7 +1397,7 @@ Strategy3.5 <- function(n, simulations_df, scenario, N = 10000){
   # Calibrate
   calibrated_twophase_wave2 <- calibrate(twophase_design_wave2,
                                          ~ inflBX1_phase1 +
-                                           inflBX2_phase1 +
+                                           inflBX2_phase1 + inflBZ_phase1 +
                                            strata,
                                          phase = 2,
                                          calfun = "raking")
@@ -1333,8 +1413,19 @@ Strategy3.5 <- function(n, simulations_df, scenario, N = 10000){
   names(infl_wave2) <- c("id", "inflBX1")
   phase2_wave2 <- dplyr::left_join(phase2_wave2, infl_wave2, by = "id")
   
+  # Calculate phase 2 sampling weights
+  phase2_wave2 <- phase2_wave2 |>
+    dplyr::group_by(strata) |>
+    dplyr::mutate(
+      phase2_weight = dplyr::n() / sum(as.logical(already_sampled))
+    ) |>
+    dplyr::ungroup() |> as.data.frame()
+
   # Regress Latest IFs (computed above) on Phase 1 IFs
-  resid_model_BX1_wave2 <- lm(phase2_wave2$inflBX1 ~ phase2_wave2$inflBX1_phase1,
+  resid_model_BX1_wave2 <- lm(inflBX1 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave2,
+                              weights = phase2_weight,
                               na.action = na.exclude)
   
   # Get residuals
@@ -1345,8 +1436,7 @@ Strategy3.5 <- function(n, simulations_df, scenario, N = 10000){
                                     strata = "strata",
                                     y = "residBX1_wave2",
                                     nsample = n/4, method = "iterative",
-                                    already_sampled = "already_sampled",
-                                    allocation_method = "Neyman")
+                                    already_sampled = "already_sampled")
   
   
   # sample and merge data
@@ -1391,7 +1481,7 @@ Strategy3.5 <- function(n, simulations_df, scenario, N = 10000){
   # Calibrate
   calibrated_twophase_wave3 <- calibrate(twophase_design_wave3,
                                          ~ inflBX1_phase1 +
-                                           inflBX2_phase1 +
+                                           inflBX2_phase1 + inflBZ_phase1 +
                                            strata,
                                          phase = 2,
                                          calfun = "raking")
@@ -1407,8 +1497,19 @@ Strategy3.5 <- function(n, simulations_df, scenario, N = 10000){
   names(infl_wave3) <- c("id", "inflBX1")
   phase2_wave3 <- dplyr::left_join(phase2_wave3, infl_wave3, by = "id")
   
+  # Calculate phase 2 sampling weights
+  phase2_wave3 <- phase2_wave3 |>
+    dplyr::group_by(strata) |>
+    dplyr::mutate(
+      phase2_weight = dplyr::n() / sum(as.logical(already_sampled))
+    ) |>
+    dplyr::ungroup() |> as.data.frame()
+
   # Regress Latest IFs (computed above) on Phase 1 IFs
-  resid_model_BX1_wave3 <- lm(phase2_wave3$inflBX1 ~ phase2_wave3$inflBX1_phase1,
+  resid_model_BX1_wave3 <- lm(inflBX1 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave3,
+                              weights = phase2_weight,
                               na.action = na.exclude)
   
   # Get residuals
@@ -1420,8 +1521,7 @@ Strategy3.5 <- function(n, simulations_df, scenario, N = 10000){
                                     y = "residBX1_wave3",
                                     nsample = n/4, method = "iterative",
                                     already_sampled = "already_sampled",
-                                    detailed = TRUE,
-                                    allocation_method = "Neyman")
+                                    detailed = TRUE)
   
   # Check for oversampling
   oversampled_X1 <- ifelse(all(wave4_allocation$nsample_optimal == 
@@ -1482,7 +1582,7 @@ Strategy3.5 <- function(n, simulations_df, scenario, N = 10000){
     strata = list(NULL, ~strata), data = data
   )
   infcal <- survey::calibrate(mydesign, formula = ~ inflBX1_phase1 +
-                                inflBX2_phase1 + strata, phase = 2, calfun = "raking")
+                                inflBX2_phase1 + inflBZ_phase1 + strata, phase = 2, calfun = "raking")
   
   # Fitting the outcome model: conditional treatment effect of interest.
   fit <- survey::svyglm(Y ~ X1 + X2 + Z, design = infcal, family = quasibinomial)
@@ -1606,6 +1706,7 @@ Strategy4 <- function(n, simulations_df, scenario, N = 10000){
                      family = "binomial", data = full_data)
   full_data$inflBX1_phase1 <- inf_fun_logit(fit_phase1)[,"X1_obs"]
   full_data$inflBX2_phase1 <- inf_fun_logit(fit_phase1)[,"X2_obs"]
+  full_data$inflBZ_phase1 <- inf_fun_logit(fit_phase1)[,"Z_obs"]
   
   #### Divide into strata based on observed phase 1 data X
   full_data <- full_data |>
@@ -1638,13 +1739,12 @@ Strategy4 <- function(n, simulations_df, scenario, N = 10000){
   phase1_data <- full_data
   
   # Step 2: Determine optimum allocation for wave 1 with Wright algorithm
-  wave1_allocation <- a_optimum_allocation(phase1_data,
+  wave1_allocation <- optimum_allocation(phase1_data,
                                            strata = "strata",
                                            nsample = n/4,
-                                           vars = c("inflBX1_phase1",
+                                           y = c("inflBX1_phase1",
                                                     "inflBX2_phase1"),
-                                           weights = c(0.5, 0.5),
-                                           method = "Neyman")
+                                           weights = c(0.5, 0.5))
   
   # First n/4 according to wave1_allocation
   phase2_wave1 <- sample_strata(data = phase1_data,
@@ -1674,7 +1774,7 @@ Strategy4 <- function(n, simulations_df, scenario, N = 10000){
   # Calibrate
   calibrated_twophase_wave1 <- calibrate(twophase_design_wave1,
                                          ~ inflBX1_phase1 +
-                                           inflBX2_phase1 +
+                                           inflBX2_phase1 + inflBZ_phase1 +
                                            strata,
                                          phase = 2,
                                          calfun = "raking")
@@ -1691,10 +1791,24 @@ Strategy4 <- function(n, simulations_df, scenario, N = 10000){
   names(infl_wave1) <- c("id", "inflBX1", "inflBX2")
   phase2_wave1 <- dplyr::left_join(phase2_wave1, infl_wave1, by = "id")
   
+  # Calculate phase 2 sampling weights
+  phase2_wave1 <- phase2_wave1 |>
+    dplyr::group_by(strata) |>
+    dplyr::mutate(
+      phase2_weight = dplyr::n() / sum(as.logical(sampled_wave1))
+    ) |>
+    dplyr::ungroup() |> as.data.frame()
+
   # Regress Latest IFs (computed above) on Phase 1 IFs
-  resid_model_BX1_wave1 <- lm(phase2_wave1$inflBX1 ~ phase2_wave1$inflBX1_phase1,
+  resid_model_BX1_wave1 <- lm(inflBX1 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave1,
+                              weights = phase2_weight,
                               na.action = na.exclude)
-  resid_model_BX2_wave1 <- lm(phase2_wave1$inflBX2 ~ phase2_wave1$inflBX2_phase1,
+  resid_model_BX2_wave1 <- lm(inflBX2 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave1,
+                              weights = phase2_weight,
                               na.action = na.exclude)
   
   # Get residuals
@@ -1702,15 +1816,14 @@ Strategy4 <- function(n, simulations_df, scenario, N = 10000){
   phase2_wave1$residBX2_wave1 <- resid(resid_model_BX2_wave1)
   
   # Calculate allocation for wave 2
-  wave2_allocation <- a_optimal_allocate_wave(phase2_wave1,
+  wave2_allocation <- allocate_wave(phase2_wave1,
                                               strata = "strata",
-                                              vars = c("residBX1_wave1", 
+                                              y = c("residBX1_wave1", 
                                                        "residBX2_wave1"),
                                               weights = c(0.5, 0.5),
                                               already_sampled = "sampled_wave1",
                                               nsample = n/4,
                                               method = "simple",
-                                              allocation_method = "Neyman",
                                               detailed = TRUE)
   
   
@@ -1752,7 +1865,7 @@ Strategy4 <- function(n, simulations_df, scenario, N = 10000){
   # Calibrate
   calibrated_twophase_wave2 <- calibrate(twophase_design_wave2,
                                          ~ inflBX1_phase1 +
-                                           inflBX2_phase1 +
+                                           inflBX2_phase1 + inflBZ_phase1 +
                                            strata,
                                          phase = 2,
                                          calfun = "raking")
@@ -1769,10 +1882,24 @@ Strategy4 <- function(n, simulations_df, scenario, N = 10000){
   names(infl_wave2) <- c("id", "inflBX1", "inflBX2")
   phase2_wave2 <- dplyr::left_join(phase2_wave2, infl_wave2, by = "id")
   
+  # Calculate phase 2 sampling weights
+  phase2_wave2 <- phase2_wave2 |>
+    dplyr::group_by(strata) |>
+    dplyr::mutate(
+      phase2_weight = dplyr::n() / sum(as.logical(already_sampled))
+    ) |>
+    dplyr::ungroup() |> as.data.frame()
+
   # Regress Latest IFs (computed above) on Phase 1 IFs
-  resid_model_BX1_wave2 <- lm(phase2_wave2$inflBX1 ~ phase2_wave2$inflBX1_phase1,
+  resid_model_BX1_wave2 <- lm(inflBX1 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave2,
+                              weights = phase2_weight,
                               na.action = na.exclude)
-  resid_model_BX2_wave2 <- lm(phase2_wave2$inflBX2 ~ phase2_wave2$inflBX2_phase1,
+  resid_model_BX2_wave2 <- lm(inflBX2 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave2,
+                              weights = phase2_weight,
                               na.action = na.exclude)
   
   # Get residuals
@@ -1780,16 +1907,15 @@ Strategy4 <- function(n, simulations_df, scenario, N = 10000){
   phase2_wave2$residBX2_wave2 <- resid(resid_model_BX2_wave2)
   
   # Re-calculate allocations
-  wave3_allocation <- a_optimal_allocate_wave(phase2_wave2,
+  wave3_allocation <- allocate_wave(phase2_wave2,
                                               strata = "strata",
-                                              vars = c("residBX1_wave2",
+                                              y = c("residBX1_wave2",
                                                        "residBX2_wave2"),
                                               weights = c(0.5, 0.5),
                                               already_sampled = "already_sampled",
                                               nsample = n/4,
                                               method = "simple",
-                                              detailed = TRUE,
-                                              allocation_method = "Neyman")
+                                              detailed = TRUE)
   
   
   # sample and merge data
@@ -1832,7 +1958,7 @@ Strategy4 <- function(n, simulations_df, scenario, N = 10000){
   # Calibrate
   calibrated_twophase_wave3 <- calibrate(twophase_design_wave3,
                                          ~ inflBX1_phase1 +
-                                           inflBX2_phase1 +
+                                           inflBX2_phase1 + inflBZ_phase1 +
                                            strata,
                                          phase = 2,
                                          calfun = "raking")
@@ -1849,10 +1975,24 @@ Strategy4 <- function(n, simulations_df, scenario, N = 10000){
   names(infl_wave3) <- c("id", "inflBX1", "inflBX2")
   phase2_wave3 <- dplyr::left_join(phase2_wave3, infl_wave3, by = "id")
   
+  # Calculate phase 2 sampling weights
+  phase2_wave3 <- phase2_wave3 |>
+    dplyr::group_by(strata) |>
+    dplyr::mutate(
+      phase2_weight = dplyr::n() / sum(as.logical(already_sampled))
+    ) |>
+    dplyr::ungroup() |> as.data.frame()
+
   # Regress Latest IFs (computed above) on Phase 1 IFs
-  resid_model_BX1_wave3 <- lm(phase2_wave3$inflBX1 ~ phase2_wave3$inflBX1_phase1,
+  resid_model_BX1_wave3 <- lm(inflBX1 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave3,
+                              weights = phase2_weight,
                               na.action = na.exclude)
-  resid_model_BX2_wave3 <- lm(phase2_wave3$inflBX2 ~ phase2_wave3$inflBX2_phase1,
+  resid_model_BX2_wave3 <- lm(inflBX2 ~ inflBX1_phase1 +
+                              inflBX2_phase1 + inflBZ_phase1 + strata,
+                              data = phase2_wave3,
+                              weights = phase2_weight,
                               na.action = na.exclude)
   
   # Get residuals
@@ -1860,15 +2000,14 @@ Strategy4 <- function(n, simulations_df, scenario, N = 10000){
   phase2_wave3$residBX2_wave3 <- resid(resid_model_BX2_wave3)
   
   # Re-calculate allocation
-  wave4_allocation <- a_optimal_allocate_wave(phase2_wave3,
+  wave4_allocation <- allocate_wave(phase2_wave3,
                                               strata = "strata",
-                                              vars = c("residBX1_wave3", 
+                                              y = c("residBX1_wave3", 
                                                        "residBX2_wave3"),
                                               weights = c(0.5, 0.5),
                                               already_sampled = "already_sampled",
                                               nsample = n/4,
                                               method = "simple",
-                                              allocation_method = "Neyman",
                                               detailed = TRUE)
   
   # Check for oversampling
@@ -1931,7 +2070,7 @@ Strategy4 <- function(n, simulations_df, scenario, N = 10000){
     strata = list(NULL, ~strata), data = data
   )
   infcal <- survey::calibrate(mydesign, formula = ~ inflBX1_phase1 +
-                                inflBX2_phase1 + strata, phase = 2, calfun = "raking")
+                                inflBX2_phase1 + inflBZ_phase1 + strata, phase = 2, calfun = "raking")
   
   # Fitting the outcome model: conditional treatment effect of interest.
   fit <- survey::svyglm(Y ~ X1 + X2 + Z, design = infcal, family = quasibinomial)
@@ -2054,6 +2193,7 @@ Strategy5 <- function(n, simulations_df, scenario, N = 10000){
                      family = "binomial", data = full_data)
   full_data$inflBX1_phase1 <- inf_fun_logit(fit_phase1)[,"X1_obs"]
   full_data$inflBX2_phase1 <- inf_fun_logit(fit_phase1)[,"X2_obs"]
+  full_data$inflBZ_phase1 <- inf_fun_logit(fit_phase1)[,"Z_obs"]
   
   #### True model
   true_modelY <-  glm(Y ~ X1 + X2 + Z, 
@@ -2093,22 +2233,25 @@ Strategy5 <- function(n, simulations_df, scenario, N = 10000){
   data$inflBX1_true <- inf_fun_logit(true_modelY)[,"X1"]
   data$inflBX2_true <- inf_fun_logit(true_modelY)[,"X2"]
   
-  resid_model_BX1 <- lm(data$inflBX1_true ~ data$inflBX1_phase1,
-                              na.action = na.exclude)
-  resid_model_BX2 <- lm(data$inflBX2_true ~ data$inflBX2_phase1,
-                              na.action = na.exclude)
+  resid_model_BX1 <- lm(inflBX1_true ~ inflBX1_phase1 + inflBX2_phase1 +
+                          inflBZ_phase1 + strata,
+                        data = data,
+                        na.action = na.exclude)
+  resid_model_BX2 <- lm(inflBX2_true ~ inflBX1_phase1 + inflBX2_phase1 +
+                          inflBZ_phase1 + strata,
+                        data = data,
+                        na.action = na.exclude)
   
   data$residBX1 <- resid(resid_model_BX1)
   data$residBX2 <- resid(resid_model_BX2)
   
   
   # Step 3: Determine optimum allocation for phase 2
-  allocation <- a_optimum_allocation(data,
+  allocation <- optimum_allocation(data,
                                            strata = "strata",
                                            nsample = n,
-                                           vars = c("residBX1", "residBX2"),
-                                           weights = c(0.5, 0.5),
-                                           method = "Neyman")
+                                           y = c("residBX1", "residBX2"),
+                                           weights = c(0.5, 0.5))
   
   # Sample according to wave1_allocation
   data <- sample_strata(data = data,
@@ -2141,7 +2284,7 @@ Strategy5 <- function(n, simulations_df, scenario, N = 10000){
     strata = list(NULL, ~strata), data = data
   )
   infcal <- survey::calibrate(mydesign, formula = ~ inflBX1_phase1 +
-                                inflBX2_phase1 + strata, phase = 2, calfun = "raking")
+                                inflBX2_phase1 + inflBZ_phase1 + strata, phase = 2, calfun = "raking")
   
   # Fitting the outcome model:
   fit <- survey::svyglm(Y ~ X1 + X2 + Z, design = infcal, family = quasibinomial)
