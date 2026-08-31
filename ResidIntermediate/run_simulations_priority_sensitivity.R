@@ -2,9 +2,6 @@
 #### Multiple Outcomes Paper Simulations - Neyman Allocation Version
 ##########
 
-### Author: Jasper Yang
-
-
 #####
 ## Load packages
 #####
