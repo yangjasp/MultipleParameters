@@ -2,8 +2,6 @@
 ### Sensitivity analysis of A-optimality with different priority weights
 #####
 
-
-
 ######
 ###  A-optimal sampling
 #####
