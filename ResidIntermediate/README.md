@@ -1,3 +1,3 @@
 ## ReadMe
 
-This folder contains the final code and results for the paper "Practical designs for two-phase sampling with multiple parameters of interest". In the simulations, Residuals of IPW estimators are computed between each wave and the influence functions from these residuals estimators are used in the optimum allocation. 
+This folder contains the final code and results for the paper "Optimal two-phase sampling designs for generalized raking estimators with multiple parameters of interest". The simulations in this folder estimate the optimal allocation using residuals according to the GR-optimal design described in the paper. 
